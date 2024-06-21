@@ -215,6 +215,26 @@ class HypercoreStorage {
     }
   }
 
+  async unlink () {
+    await this.mutex.write.lock()
+    try {
+      const write = this.db.write()
+      const info = await getStorageInfo(this.db)
+
+      info.total--
+
+      write.tryDelete(Buffer.concat([DKEYS, this.discoveryKey]))
+      write.tryPut(STORAGE_INFO, c.encode(m.StorageInfo, info))
+      write.tryDeleteRange(this.authPrefix, Buffer.concat([this.authPrefix, INF]))
+      write.tryDeleteRange(this.dataPrefix, Buffer.concat([this.authPrefix, INF]))
+
+      await write.flush()
+      this.authPrefix = this.dataPrefix = null
+    } finally {
+      this.mutex.write.unlock()
+    }
+  }
+
   _onopen ({ auth, data }) {
     this.authPrefix = c.encode(UINT, auth)
     this.dataPrefix = c.encode(UINT, data)

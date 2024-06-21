@@ -4,6 +4,7 @@ const CoreStorage = require('../')
 
 const DK_0 = Buffer.alloc(32).fill('dk0')
 const DK_1 = Buffer.alloc(32).fill('dk1')
+const DK_2 = Buffer.alloc(32).fill('dk2')
 const HASH = Buffer.alloc(32).fill('hash')
 const BATCH = 0
 
@@ -416,6 +417,43 @@ test('make lots of cores in parallel', async function (t) {
 
   const info = await s.info()
   t.is(info.total, 1024)
+})
+
+test('unlink core', async function (t) {
+  const s = await getStorage(t)
+
+  const c1 = s.get(DK_0)
+  const c2 = s.get(DK_1)
+  const c3 = s.get(DK_2)
+
+  if (!(await c1.open())) await c1.create({ key: DK_0 })
+  if (!(await c2.open())) await c2.create({ key: DK_1 })
+  if (!(await c3.open())) await c3.create({ key: DK_2 })
+
+  {
+    const w = c3.createWriteBatch()
+    w.putTreeNode(BATCH, { index: 42, size: 10, hash: HASH })
+    await w.flush()
+  }
+
+  {
+    const w = c2.createWriteBatch()
+    w.putTreeNode(BATCH, { index: 43, size: 11, hash: HASH })
+    await w.flush()
+  }
+
+  {
+    const w = c1.createWriteBatch()
+    w.putTreeNode(BATCH, { index: 44, size: 12, hash: HASH })
+    await w.flush()
+  }
+
+  await c2.unlink()
+
+  t.is((await s.info()).total, 2)
+
+  t.alike(await c1.getTreeNode(BATCH, 44), { index: 44, size: 12, hash: HASH })
+  t.alike(await c3.getTreeNode(BATCH, 42), { index: 42, size: 10, hash: HASH })
 })
 
 async function getStorage (t) {
