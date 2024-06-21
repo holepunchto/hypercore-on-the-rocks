@@ -6,8 +6,8 @@ const m = require('./lib/messages')
 
 const INF = Buffer.from([0xff])
 
-const STORAGE_INFO = Buffer.from([0x00])
-const DKEYS = Buffer.from([0x01])
+const TOP_LEVEL_STORAGE_INFO = Buffer.from([0x00])
+const TOP_LEVEL_CORE_INFO = Buffer.from([0x01])
 
 const CORE_META = 0
 const CORE_TREE = 1
@@ -150,8 +150,8 @@ module.exports = class CoreStorage {
 
   list () {
     const s = this.db.iterator({
-      gt: DKEYS,
-      lt: Buffer.from([DKEYS[0] + 1])
+      gt: TOP_LEVEL_CORE_INFO,
+      lt: Buffer.from([TOP_LEVEL_CORE_INFO[0] + 1])
     })
 
     s._readableState.map = mapOnlyDiscoveryKey
@@ -168,7 +168,7 @@ module.exports = class CoreStorage {
 
   async clear () {
     const b = this.db.write()
-    b.tryDeleteRange(STORAGE_INFO, INF)
+    b.tryDeleteRange(TOP_LEVEL_STORAGE_INFO, INF)
     await b.flush()
   }
 
@@ -187,9 +187,9 @@ class HypercoreStorage {
   }
 
   async open () {
-    const val = await this.db.get(Buffer.concat([DKEYS, this.discoveryKey]))
+    const val = await this.db.get(Buffer.concat([TOP_LEVEL_CORE_INFO, this.discoveryKey]))
     if (val === null) return false
-    this._onopen(c.decode(m.DiscoveryKey, val))
+    this._onopen(c.decode(m.CoreInfo, val))
     return true
   }
 
@@ -204,8 +204,8 @@ class HypercoreStorage {
 
       info.total++
 
-      write.tryPut(Buffer.concat([DKEYS, this.discoveryKey]), c.encode(m.DiscoveryKey, { auth, data }))
-      write.tryPut(STORAGE_INFO, c.encode(m.StorageInfo, info))
+      write.tryPut(Buffer.concat([TOP_LEVEL_CORE_INFO, this.discoveryKey]), c.encode(m.CoreInfo, { auth, data }))
+      write.tryPut(TOP_LEVEL_STORAGE_INFO, c.encode(m.StorageInfo, info))
 
       await write.flush()
 
@@ -276,7 +276,7 @@ function mapOnlyDiscoveryKey (data) {
 }
 
 async function getStorageInfo (db) {
-  const value = await db.get(STORAGE_INFO)
+  const value = await db.get(TOP_LEVEL_STORAGE_INFO)
   if (value === null) return null
   return c.decode(m.StorageInfo, value)
 }
