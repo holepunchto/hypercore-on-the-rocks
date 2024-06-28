@@ -2,10 +2,11 @@ const RocksDB = require('rocksdb-native')
 const c = require('compact-encoding')
 const { UINT } = require('index-encoder')
 const RW = require('read-write-mutexify')
+const b4a = require('b4a')
 const assert = require('nanoassert')
 const m = require('./lib/messages')
 
-const INF = Buffer.from([0xff])
+const INF = b4a.from([0xff])
 
 // <TL_INFO> = { version, free, total }
 // <TL_LOCAL_SEED> = seed
@@ -60,7 +61,7 @@ const DATA = {
 const SLAB = {
   start: 0,
   end: 65536,
-  buffer: Buffer.allocUnsafe(65536)
+  buffer: b4a.allocUnsafe(65536)
 }
 
 // PREFIX + BATCH + TYPE + INDEX
@@ -246,8 +247,8 @@ module.exports = class CoreStorage {
 
   list () {
     const s = this.db.iterator({
-      gt: Buffer.from([TL.DKEYS]),
-      lt: Buffer.from([TL.DKEYS + 1])
+      gt: b4a.from([TL.DKEYS]),
+      lt: b4a.from([TL.DKEYS + 1])
     })
 
     s._readableState.map = mapOnlyDiscoveryKey
@@ -264,7 +265,7 @@ module.exports = class CoreStorage {
 
   async clear () {
     const b = this.db.write()
-    b.tryDeleteRange(Buffer.from([TL.STORAGE_INFO]), INF)
+    b.tryDeleteRange(b4a.from([TL.STORAGE_INFO]), INF)
     await b.flush()
   }
 
@@ -278,7 +279,7 @@ class HypercoreStorage {
     this.db = db
     this.mutex = mutex
 
-    this.discoveryKey = discoveryKey
+    this.discoveryKey = discoveryKey || null
 
     // pointers
     this.corePointer = -1
@@ -288,7 +289,7 @@ class HypercoreStorage {
   async open () {
     if (!this.discoveryKey) {
       const discoveryKey = await getDefaultKey(this.db)
-      if (!discoveryKey) throw new Error('No discovery key was provided')
+      if (!discoveryKey) return null
 
       this.discoveryKey = discoveryKey
     }
@@ -304,7 +305,7 @@ class HypercoreStorage {
     return this.getCoreInfo()
   }
 
-  async create ({ key, manifest, keyPair, encryptionKey }) {
+  async create ({ key, manifest, keyPair, encryptionKey, discoveryKey }) {
     await this.mutex.write.lock()
 
     try {
@@ -315,6 +316,16 @@ class HypercoreStorage {
         return false
       }
 
+      if (this.discoveryKey && discoveryKey && !b4a.equals(this.discoveryKey, discoveryKey)) {
+        throw new Error('Discovery key does correspond')
+      }
+
+      if (!this.discoveryKey && !discoveryKey) {
+        throw new Error('No discovery key is provided')
+      }
+
+      if (!this.discoveryKey) this.discoveryKey = discoveryKey
+
       if (!key) throw new Error('No key was provided')
 
       let info = await getStorageInfo(this.db)
@@ -322,7 +333,7 @@ class HypercoreStorage {
       const write = this.db.write()
 
       if (!info) {
-        write.tryPut(Buffer.from([TL.DEFAULT_KEY]), this.discoveryKey)
+        write.tryPut(b4a.from([TL.DEFAULT_KEY]), this.discoveryKey)
         info = { free: 0, total: 0 }
       }
 
@@ -330,7 +341,7 @@ class HypercoreStorage {
       const data = info.free++
 
       write.tryPut(encodeDiscoveryKey(this.discoveryKey), encode(m.CorePointer, { core, data }))
-      write.tryPut(Buffer.from([TL.STORAGE_INFO]), encode(m.StorageInfo, info))
+      write.tryPut(b4a.from([TL.STORAGE_INFO]), encode(m.StorageInfo, info))
 
       this.corePointer = core
       this.dataPointer = data
@@ -522,18 +533,18 @@ function mapOnlyDiscoveryKey (data) {
 }
 
 async function getDefaultKey (db) {
-  return db.get(Buffer.from([TL.DEFAULT_KEY]))
+  return db.get(b4a.from([TL.DEFAULT_KEY]))
 }
 
 async function getStorageInfo (db) {
-  const value = await db.get(Buffer.from([TL.STORAGE_INFO]))
+  const value = await db.get(b4a.from([TL.STORAGE_INFO]))
   if (value === null) return null
   return c.decode(m.StorageInfo, value)
 }
 
 function ensureSlab (size) {
   if (SLAB.buffer.byteLength - SLAB.start < size) {
-    SLAB.buffer = Buffer.allocUnsafe(SLAB.end)
+    SLAB.buffer = b4a.allocUnsafe(SLAB.end)
     SLAB.start = 0
   }
 
@@ -588,7 +599,7 @@ function encodeDataIndex (pointer, type, index) {
 
 function encodeUserDataIndex (pointer, type, key) {
   const end = 128 + key.length
-  const state = { start: 0, end, buffer: Buffer.alloc(end) }
+  const state = { start: 0, end, buffer: b4a.alloc(end) }
   const start = state.start
   UINT.encode(state, TL.DATA)
   UINT.encode(state, pointer)
