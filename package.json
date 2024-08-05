@@ -15,6 +15,7 @@
   "dependencies": {
     "b4a": "^1.6.6",
     "compact-encoding": "^2.15.0",
+    "flat-tree": "^1.10.0",
     "index-encoder": "^3.0.1",
     "nanoassert": "^2.0.0",
     "read-write-mutexify": "^2.1.0",

@@ -3,6 +3,7 @@ const c = require('compact-encoding')
 const { UINT } = require('index-encoder')
 const RW = require('read-write-mutexify')
 const b4a = require('b4a')
+const flat = require('flat-tree')
 const assert = require('nanoassert')
 const m = require('./lib/messages')
 
@@ -15,10 +16,10 @@ const INF = b4a.from([0xff])
 // <core><CORE_MANIFEST>        = { key, manifest? }
 // <core><CORE_LOCAL_SEED>      = seed
 // <core><CORE_ENCRYPTION_KEY>  = encryptionKey // should come later, not important initially
-// <core><CORE_HEAD><data>      = { fork, length, byteLength, signature }
 // <core><CORE_BATCHES><name>   = <data>
 
 // <data><CORE_INFO>            = { version }
+// <core><CORE_HEAD><data>      = { fork, length, byteLength, signature }
 // <data><CORE_UPDATES>         = { contiguousLength, blocks }
 // <data><CORE_DEPENDENCY       = { data, length, roots }
 // <data><CORE_HINTS>           = { reorg } // should come later, not important initially
@@ -73,11 +74,19 @@ class WriteBatch {
   }
 
   setCoreHead (head) {
-    this.write.tryPut(encodeCoreIndex(this.storage.corePointer, CORE.HEAD), c.encode(m.CoreHead, head))
+    this.write.tryPut(encodeCoreIndex(this.storage.dataPointer, CORE.HEAD), c.encode(m.CoreHead, head))
   }
 
   setCoreAuth ({ key, manifest }) {
     this.write.tryPut(encodeCoreIndex(this.storage.corePointer, CORE.MANIFEST), c.encode(m.CoreAuth, { key, manifest }))
+  }
+
+  setBatchPointer (name, pointer) {
+    this.write.tryPut(encodeBatch(this.storage.corePointer, CORE.BATCHES, name), encode(m.DataPointer, pointer))
+  }
+
+  setDataDependency ({ data, length }) {
+    this.write.tryPut(encodeDataIndex(this.storage.dataPointer, DATA.DEPENDENCY), encode(m.DataDependency, { data, length }))
   }
 
   setLocalKeyPair (keyPair) {
@@ -152,7 +161,7 @@ class ReadBatch {
   }
 
   async getCoreHead () {
-    return this._get(encodeCoreIndex(this.storage.corePointer, CORE.HEAD), m.CoreHead)
+    return this._get(encodeCoreIndex(this.storage.dataPointer, CORE.HEAD), m.CoreHead)
   }
 
   async getCoreAuth () {
@@ -180,7 +189,12 @@ class ReadBatch {
   }
 
   async getBlock (index, error) {
-    const key = encodeDataIndex(this.storage.dataPointer, DATA.BLOCK, index)
+    const deps = this.storage.dependencies
+    const dataPointer = deps.length && index < deps[0].length
+      ? deps[0].data
+      : this.storage.dataPointer
+
+    const key = encodeDataIndex(dataPointer, DATA.BLOCK, index)
     const block = await this._get(key, null)
 
     if (block === null && error === true) {
@@ -195,7 +209,12 @@ class ReadBatch {
   }
 
   async getTreeNode (index, error) {
-    const key = encodeDataIndex(this.storage.dataPointer, DATA.TREE, index)
+    const deps = this.storage.dependencies
+    const dataPointer = deps.length && flat.rightSpan(index) <= deps[0].length * 2 - 2
+      ? deps[0].data
+      : this.storage.dataPointer
+
+    const key = encodeDataIndex(dataPointer, DATA.TREE, index)
     const node = await this._get(key, m.TreeNode)
 
     if (node === null && error === true) {
@@ -285,6 +304,8 @@ class HypercoreStorage {
 
     this.discoveryKey = discoveryKey || null
 
+    this.dependencies = []
+
     // pointers
     this.corePointer = -1
     this.dataPointer = -1
@@ -361,6 +382,48 @@ class HypercoreStorage {
     }
 
     return true
+  }
+
+  async registerBatch (name, length) {
+    // todo: make sure opened
+    const existing = await this.db.get(encodeBatch(this.corePointer, CORE.BATCHES, name))
+    const storage = new HypercoreStorage(this.db, this.mutex, this.discoveryKey)
+
+    storage.corePointer = this.corePointer
+
+    if (existing) {
+      storage.dataPointer = c.decode(m.DataPointer, existing)
+      storage.dependencies = await addDependencies(this.db, storage.dataPointer)
+
+      return storage
+    }
+
+    await this.mutex.write.lock()
+
+    try {
+      const info = await getStorageInfo(this.db)
+
+      const write = this.db.write()
+
+      storage.dataPointer = info.free++
+
+      write.tryPut(b4a.from([TL.STORAGE_INFO]), encode(m.StorageInfo, info))
+
+      const batch = new WriteBatch(storage, write)
+
+      this.initialiseCoreData(batch)
+
+      batch.setDataDependency({ data: this.dataPointer, length })
+      batch.setBatchPointer(name, storage.dataPointer)
+
+      await write.flush()
+
+      storage.dependencies = await addDependencies(this.db, storage.dataPointer)
+
+      return storage
+    } finally {
+      this.mutex.write.unlock()
+    }
   }
 
   initialiseCoreInfo (db, { key, manifest, keyPair, encryptionKey }) {
@@ -579,6 +642,18 @@ function encode (encoding, value) {
   return state.buffer.subarray(start, state.start)
 }
 
+function encodeBatch (pointer, type, name) {
+  const end = 128 + name.length
+  const state = { start: 0, end, buffer: b4a.allocUnsafe(end) }
+  const start = state.start
+  UINT.encode(state, TL.CORE)
+  UINT.encode(state, pointer)
+  UINT.encode(state, type)
+  c.string.encode(state, name)
+
+  return state.buffer.subarray(start, state.start)
+}
+
 function encodeCoreIndex (pointer, type, index) {
   const state = ensureSlab(128)
   const start = state.start
@@ -619,4 +694,18 @@ function encodeDiscoveryKey (discoveryKey) {
   UINT.encode(state, TL.DKEYS)
   c.fixed32.encode(state, discoveryKey)
   return state.buffer.subarray(start, state.start)
+}
+
+async function addDependencies (db, dataPointer) {
+  const dependencies = []
+
+  let dep = await db.get(encodeDataIndex(dataPointer, DATA.DEPENDENCY))
+  while (dep) {
+    const { data, length } = c.decode(m.DataDependency, dep)
+    dependencies.push({ data, length })
+
+    dep = await db.get(encodeDataIndex(data, DATA.DEPENDENCY))
+  }
+
+  return dependencies
 }
