@@ -377,8 +377,13 @@ class HypercoreStorage {
     db.setDataInfo({ version: 0 })
   }
 
-  createReadBatch () {
-    return new ReadBatch(this, this.db.read())
+  snapshot () {
+    return this.db.snapshot()
+  }
+
+  createReadBatch (opts) {
+    const snapshot = opts && opts.snapshot
+    return new ReadBatch(this, this.db.read({ snapshot }))
   }
 
   createWriteBatch () {
@@ -556,7 +561,7 @@ function ensureSlab (size) {
 }
 
 function encodeIndexRange (pointer, type, opts) {
-  const bounded = { gt: null, gte: null, lte: null, lt: null, reverse: !!opts.reverse, limit: opts.limit || Infinity }
+  const bounded = { snapshot: opts.snapshot, gt: null, gte: null, lte: null, lt: null, reverse: !!opts.reverse, limit: opts.limit || Infinity }
 
   if (opts.gt || opts.gt === 0) bounded.gt = encodeDataIndex(pointer, type, opts.gt)
   else if (opts.gte) bounded.gte = encodeDataIndex(pointer, type, opts.gte)

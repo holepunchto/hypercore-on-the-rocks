@@ -3,17 +3,17 @@ import CoreStorage from './index.js'
 const s = new CoreStorage('/tmp/rocks')
 const c = s.get(Buffer.alloc(32))
 
-if (!(await c.open())) await c.create()
+if (!(await c.open())) await c.create({ key: Buffer.alloc(32) })
 
 const w = c.createWriteBatch()
 
-w.addTreeNode({
+w.putTreeNode({
   index: 42,
   hash: Buffer.alloc(32),
   size: 10
 })
 
-w.addTreeNode({
+w.putTreeNode({
   index: 43,
   hash: Buffer.alloc(32),
   size: 10
