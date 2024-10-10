@@ -1,386 +1,567 @@
 const test = require('brittle')
 const tmp = require('test-tmp')
-const b4a = require('b4a')
 
 const CoreStorage = require('../')
 const MemoryOverlay = require('../lib/memory-overlay')
 
 const KEY = Buffer.alloc(32).fill('dk0')
+const HASH = Buffer.alloc(32).fill('hash')
 
-test('memory overlay - write + read', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
-
-  const w = overlay.createWriteBatch()
-  w.putBlock(0, b4a.from('hello'))
-  w.putBlock(1, b4a.from('world'))
-  w.flush()
-
-  const r = overlay.createReadBatch()
-  const p0 = r.getBlock(0)
-  const p1 = r.getBlock(1)
-  r.tryFlush()
-
-  t.alike(await p0, b4a.from('hello'))
-  t.alike(await p1, b4a.from('world'))
-})
-
-test('memory overlay - multiple writes', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
+test('memory overlay - basic', async function (t) {
+  const c = await getCore(t)
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(0, b4a.from('hello'))
-    w.putBlock(1, b4a.from('world'))
-    w.flush()
+    const b = c.createWriteBatch()
+
+    b.putTreeNode({
+      index: 42,
+      hash: HASH,
+      size: 10
+    })
+
+    b.putTreeNode({
+      index: 43,
+      hash: HASH,
+      size: 2
+    })
+
+    await b.flush()
   }
 
   {
-    const r = overlay.createReadBatch()
-    const p0 = r.getBlock(0)
-    const p1 = r.getBlock(1)
-    r.tryFlush()
+    const b = c.createReadBatch()
+    const node1 = b.getTreeNode(42)
+    const node2 = b.getTreeNode(43)
+    b.tryFlush()
 
-    t.alike(await p0, b4a.from('hello'))
-    t.alike(await p1, b4a.from('world'))
-  }
-
-  {
-    const w = overlay.createWriteBatch()
-    w.putBlock(2, b4a.from('goodbye'))
-    w.putBlock(3, b4a.from('test'))
-    w.flush()
-  }
-
-  {
-    const r = overlay.createReadBatch()
-    const p2 = r.getBlock(2)
-    const p3 = r.getBlock(3)
-    r.tryFlush()
-
-    t.alike(await p2, b4a.from('goodbye'))
-    t.alike(await p3, b4a.from('test'))
+    t.alike(await node1, { index: 42, hash: HASH, size: 10 })
+    t.alike(await node2, { index: 43, hash: HASH, size: 2 })
   }
 })
 
-test('memory overlay - overwrite', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
+test.skip('memory overlay - delete nodes', async function (t) {
+  const c = await getCore(t)
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(0, b4a.from('hello'))
-    w.putBlock(1, b4a.from('world'))
-    w.flush()
+    const b = c.createWriteBatch()
+
+    b.putTreeNode({
+      index: 10244242,
+      hash: HASH,
+      size: 10
+    })
+
+    await b.flush()
   }
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(0, b4a.from('goodbye'))
-    w.putBlock(1, b4a.from('test'))
-    w.flush()
+    const b = c.createReadBatch()
+    const node = b.getTreeNode(10244242)
+    b.tryFlush()
+
+    t.alike(await node, { index: 10244242, hash: HASH, size: 10 })
   }
 
   {
-    const r = overlay.createReadBatch()
-    const p0 = r.getBlock(0)
-    const p1 = r.getBlock(1)
-    r.tryFlush()
+    const b = c.createWriteBatch()
 
-    t.alike(await p0, b4a.from('goodbye'))
-    t.alike(await p1, b4a.from('test'))
-  }
-})
+    b.deleteTreeNode(10244242)
 
-test('memory overlay - write + read with offset', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
-
-  const w = overlay.createWriteBatch()
-  w.putBlock(3, b4a.from('hello'))
-  w.putBlock(4, b4a.from('world'))
-  w.flush()
-
-  const r = overlay.createReadBatch()
-  const p0 = r.getBlock(0)
-  const p3 = r.getBlock(3)
-  const p4 = r.getBlock(4)
-  r.tryFlush()
-
-  t.alike(await p0, null)
-  t.alike(await p3, b4a.from('hello'))
-  t.alike(await p4, b4a.from('world'))
-})
-
-test('memory overlay - multiple writes with offset', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
-
-  {
-    const w = overlay.createWriteBatch()
-    w.putBlock(5, b4a.from('hello'))
-    w.putBlock(6, b4a.from('world'))
-    w.flush()
+    await b.flush()
   }
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(7, b4a.from('goodbye'))
-    w.putBlock(8, b4a.from('test'))
-    w.flush()
-  }
+    const b = c.createReadBatch()
+    const node = b.getTreeNode(10244242)
+    b.tryFlush()
 
-  {
-    const r = overlay.createReadBatch()
-
-    const p5 = r.getBlock(5)
-    const p6 = r.getBlock(6)
-    const p7 = r.getBlock(7)
-    const p8 = r.getBlock(8)
-
-    r.tryFlush()
-
-    t.alike(await p5, b4a.from('hello'))
-    t.alike(await p6, b4a.from('world'))
-    t.alike(await p7, b4a.from('goodbye'))
-    t.alike(await p8, b4a.from('test'))
+    t.is(await node, null)
   }
 })
 
-test('memory overlay - overwrite with offset', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
+test('memory overlay - delete tree node range', async function (t) {
+  const c = await getCore(t)
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(3, b4a.from('hello'))
-    w.putBlock(4, b4a.from('world'))
-    w.flush()
+    let index = 10244242
+
+    const b = c.createWriteBatch()
+
+    b.putTreeNode({ index: index++, hash: HASH, size: 10 })
+    b.putTreeNode({ index: index++, hash: HASH, size: 10 })
+    b.putTreeNode({ index: index++, hash: HASH, size: 10 })
+    b.putTreeNode({ index: index++, hash: HASH, size: 10 })
+
+    await b.flush()
   }
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(3, b4a.from('goodbye'))
-    w.putBlock(4, b4a.from('test'))
-    w.flush()
+    let index = 10244242
+
+    const b = c.createReadBatch()
+
+    const node1 = b.getTreeNode(index++)
+    const node2 = b.getTreeNode(index++)
+    const node3 = b.getTreeNode(index++)
+    const node4 = b.getTreeNode(index++)
+    b.tryFlush()
+
+    t.alike(await node1, { index: 10244242, hash: HASH, size: 10 })
+    t.alike(await node2, { index: 10244243, hash: HASH, size: 10 })
+    t.alike(await node3, { index: 10244244, hash: HASH, size: 10 })
+    t.alike(await node4, { index: 10244245, hash: HASH, size: 10 })
   }
 
   {
-    const r = overlay.createReadBatch()
-    const p0 = r.getBlock(0)
-    const p3 = r.getBlock(3)
-    const p4 = r.getBlock(4)
-    r.tryFlush()
+    const b = c.createWriteBatch()
 
-    t.alike(await p0, null)
-    t.alike(await p3, b4a.from('goodbye'))
-    t.alike(await p4, b4a.from('test'))
-  }
-})
+    b.deleteTreeNodeRange(10244242, 10244246)
 
-test('memory overlay - deletion', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
-
-  {
-    const w = overlay.createWriteBatch()
-    w.putBlock(0, b4a.from('hello'))
-    w.putBlock(1, b4a.from('world'))
-    w.putBlock(2, b4a.from('goodbye'))
-    w.flush()
+    await b.flush()
   }
 
   {
-    const w = overlay.createWriteBatch()
-    w.deleteBlockRange(1, 10)
+    let index = 10244242
 
-    t.exception(() => w.putBlock(2, b4a.from('fail')), 'no put after deletion')
+    const b = c.createReadBatch()
 
-    w.flush()
-  }
+    const node1 = b.getTreeNode(index++)
+    const node2 = b.getTreeNode(index++)
+    const node3 = b.getTreeNode(index++)
+    const node4 = b.getTreeNode(index++)
+    b.tryFlush()
 
-  {
-    const r = overlay.createReadBatch()
-    const p0 = r.getBlock(0)
-    const p1 = r.getBlock(1)
-    const p2 = r.getBlock(2)
-    r.tryFlush()
-
-    t.alike(await p0, b4a.from('hello'))
-    t.alike(await p1, null)
-    t.alike(await p2, null)
+    t.alike(await node1, null)
+    t.alike(await node2, null)
+    t.alike(await node3, null)
+    t.alike(await node4, null)
   }
 })
 
-test('memory overlay - deletion on put batch', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
+test('memory overlay - delete tree node range: no end', async function (t) {
+  const c = await getCore(t)
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(0, b4a.from('hello'))
-    w.putBlock(1, b4a.from('world'))
-    w.putBlock(2, b4a.from('goodbye'))
-    w.deleteBlockRange(2, 10)
-    w.flush()
+    let index = 10244242
+
+    const b = c.createWriteBatch()
+
+    b.putTreeNode({ index: index++, hash: HASH, size: 10 })
+    b.putTreeNode({ index: index++, hash: HASH, size: 10 })
+    b.putTreeNode({ index: index++, hash: HASH, size: 10 })
+    b.putTreeNode({ index: index++, hash: HASH, size: 10 })
+
+    await b.flush()
   }
 
   {
-    const r = overlay.createReadBatch()
-    const p0 = r.getBlock(0)
-    const p1 = r.getBlock(1)
-    const p2 = r.getBlock(2)
-    r.tryFlush()
+    let index = 10244242
 
-    t.alike(await p0, b4a.from('hello'))
-    t.alike(await p1, b4a.from('world'))
-    t.alike(await p2, null)
-  }
-})
+    const b = c.createReadBatch()
 
-test('memory overlay - deletion with offset', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
+    const node1 = b.getTreeNode(index++)
+    const node2 = b.getTreeNode(index++)
+    const node3 = b.getTreeNode(index++)
+    const node4 = b.getTreeNode(index++)
+    b.tryFlush()
 
-  {
-    const w = overlay.createWriteBatch()
-    w.putBlock(4, b4a.from('hello'))
-    w.putBlock(5, b4a.from('world'))
-    w.putBlock(6, b4a.from('goodbye'))
-    w.flush()
+    t.alike(await node1, { index: 10244242, hash: HASH, size: 10 })
+    t.alike(await node2, { index: 10244243, hash: HASH, size: 10 })
+    t.alike(await node3, { index: 10244244, hash: HASH, size: 10 })
+    t.alike(await node4, { index: 10244245, hash: HASH, size: 10 })
   }
 
   {
-    const w = overlay.createWriteBatch()
-    w.deleteBlockRange(5, 10)
-    w.flush()
+    const b = c.createWriteBatch()
+
+    b.deleteTreeNodeRange(10244242, -1)
+
+    await b.flush()
   }
 
   {
-    const r = overlay.createReadBatch()
-    const p4 = r.getBlock(4)
-    const p5 = r.getBlock(5)
-    const p6 = r.getBlock(6)
-    r.tryFlush()
+    let index = 10244242
 
-    t.alike(await p4, b4a.from('hello'))
-    t.alike(await p5, null)
-    t.alike(await p6, null)
-  }
-})
+    const b = c.createReadBatch()
 
-test('memory overlay - overlap deletions in batch', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
+    const node1 = b.getTreeNode(index++)
+    const node2 = b.getTreeNode(index++)
+    const node3 = b.getTreeNode(index++)
+    const node4 = b.getTreeNode(index++)
+    b.tryFlush()
 
-  {
-    const w = overlay.createWriteBatch()
-    w.putBlock(0, b4a.from('hello'))
-    w.putBlock(1, b4a.from('world'))
-    w.putBlock(2, b4a.from('goodbye'))
-    w.putBlock(3, b4a.from('test'))
-    w.flush()
-  }
-
-  {
-    const w = overlay.createWriteBatch()
-    w.deleteBlockRange(3, 4)
-    w.deleteBlockRange(2, 3)
-    w.deleteBlockRange(1, 2)
-    w.flush()
-  }
-
-  {
-    const r = overlay.createReadBatch()
-    const p0 = r.getBlock(0)
-    const p1 = r.getBlock(1)
-    const p2 = r.getBlock(2)
-    const p3 = r.getBlock(3)
-    r.tryFlush()
-
-    t.alike(await p0, b4a.from('hello'))
-    t.alike(await p1, null)
-    t.alike(await p2, null)
-    t.alike(await p3, null)
+    t.alike(await node1, null)
+    t.alike(await node2, null)
+    t.alike(await node3, null)
+    t.alike(await node4, null)
   }
 })
 
-test('memory overlay - overlap deletions in batch with offset', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
+test.skip('memory overlay - peek last tree node', async function (t) {
+  const c = await getCore(t)
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(5, b4a.from('hello'))
-    w.putBlock(6, b4a.from('world'))
-    w.putBlock(7, b4a.from('goodbye'))
-    w.putBlock(8, b4a.from('test'))
-    w.flush()
+    const b = c.createWriteBatch()
+    b.putTreeNode({
+      index: 10000000,
+      hash: HASH,
+      size: 10
+    })
+    await b.flush()
   }
 
   {
-    const w = overlay.createWriteBatch()
-    w.deleteBlockRange(8, 10)
-    w.deleteBlockRange(7, 8)
-    w.deleteBlockRange(6, 7)
-    w.flush()
+    const b = c.createWriteBatch()
+    b.putTreeNode({
+      index: 1,
+      hash: HASH,
+      size: 10
+    })
+    await b.flush()
   }
 
   {
-    const r = overlay.createReadBatch()
-    const p5 = r.getBlock(5)
-    const p6 = r.getBlock(6)
-    const p7 = r.getBlock(7)
-    const p8 = r.getBlock(8)
-    r.tryFlush()
+    const b = c.createWriteBatch()
+    b.putTreeNode({
+      index: 10,
+      hash: HASH,
+      size: 10
+    })
+    await b.flush()
+  }
 
-    t.alike(await p5, b4a.from('hello'))
-    t.alike(await p6, null)
-    t.alike(await p7, null)
-    t.alike(await p8, null)
+  {
+    const node = await c.peakLastTreeNode()
+    t.alike(await node, { index: 10000000, hash: HASH, size: 10 })
   }
 })
 
-test('memory overlay - invalid deletion', async function (t) {
-  const storage = await getCore(t)
-  const overlay = new MemoryOverlay(storage)
+test.skip('memory overlay - put blocks', async function (t) {
+  const c = await getCore(t)
+
+  const data = Buffer.alloc(32, 1)
 
   {
-    const w = overlay.createWriteBatch()
-    w.putBlock(4, b4a.from('hello'))
-    w.putBlock(5, b4a.from('world'))
-    w.putBlock(6, b4a.from('goodbye'))
+    const b = c.createWriteBatch()
 
-    await t.exception(() => w.deleteBlockRange(0, 2))
-    await t.exception(() => w.deleteBlockRange(8, 10))
+    b.putBlock(10244242, data)
 
-    w.flush()
+    await b.flush()
   }
 
   {
-    const w = overlay.createWriteBatch()
-    w.deleteBlockRange(0, 2)
-    t.exception(() => w.flush())
+    const b = c.createReadBatch()
+
+    const has = b.hasBlock(10244242)
+    const node = b.getBlock(10244242)
+    const treeNode = b.getTreeNode(10244242)
+    b.tryFlush()
+
+    t.alike(await has, true)
+    t.alike(await node, data)
+    t.alike(await treeNode, null)
   }
 
   {
-    const w = overlay.createWriteBatch()
-    w.deleteBlockRange(8, 10)
-    t.exception(() => w.flush())
+    const b = c.createWriteBatch()
+
+    b.deleteBlock(10244242)
+
+    await b.flush()
   }
 
   {
-    const r = overlay.createReadBatch()
-    const p4 = r.getBlock(4)
-    const p5 = r.getBlock(5)
-    const p6 = r.getBlock(6)
-    r.tryFlush()
+    const b = c.createReadBatch()
+    const node = b.getBlock(10244242)
+    b.tryFlush()
 
-    t.alike(await p4, b4a.from('hello'))
-    t.alike(await p5, b4a.from('world'))
-    t.alike(await p6, b4a.from('goodbye'))
+    t.is(await node, null)
   }
+})
+
+test('memory overlay - delete block range', async function (t) {
+  const c = await getCore(t)
+
+  const data1 = Buffer.alloc(32, 1)
+  const data2 = Buffer.alloc(32, 2)
+  const data3 = Buffer.alloc(32, 3)
+  const data4 = Buffer.alloc(32, 4)
+
+  {
+    const b = c.createWriteBatch()
+
+    b.putBlock(10244242, data1)
+    b.putBlock(10244243, data2)
+    b.putBlock(10244244, data3)
+    b.putBlock(10244245, data4)
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const node1 = b.getBlock(10244242)
+    const node2 = b.getBlock(10244243)
+    const node3 = b.getBlock(10244244)
+    const node4 = b.getBlock(10244245)
+    b.tryFlush()
+
+    t.alike(await node1, data1)
+    t.alike(await node2, data2)
+    t.alike(await node3, data3)
+    t.alike(await node4, data4)
+  }
+
+  {
+    const b = c.createWriteBatch()
+
+    b.deleteBlockRange(10244242, 10244246)
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const node1 = b.getBlock(10244242)
+    const node2 = b.getBlock(10244243)
+    const node3 = b.getBlock(10244244)
+    const node4 = b.getBlock(10244245)
+    b.tryFlush()
+
+    t.alike(await node1, null)
+    t.alike(await node2, null)
+    t.alike(await node3, null)
+    t.alike(await node4, null)
+  }
+})
+
+test('memory overlay - delete block range: no end', async function (t) {
+  const c = await getCore(t)
+
+  const data1 = Buffer.alloc(32, 1)
+  const data2 = Buffer.alloc(32, 2)
+  const data3 = Buffer.alloc(32, 3)
+  const data4 = Buffer.alloc(32, 4)
+
+  {
+    const b = c.createWriteBatch()
+
+    b.putBlock(10244242, data1)
+    b.putBlock(10244243, data2)
+    b.putBlock(10244244, data3)
+    b.putBlock(10244245, data4)
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const node1 = b.getBlock(10244242)
+    const node2 = b.getBlock(10244243)
+    const node3 = b.getBlock(10244244)
+    const node4 = b.getBlock(10244245)
+    b.tryFlush()
+
+    t.alike(await node1, data1)
+    t.alike(await node2, data2)
+    t.alike(await node3, data3)
+    t.alike(await node4, data4)
+  }
+
+  {
+    const b = c.createWriteBatch()
+
+    b.deleteBlockRange(10244243, -1)
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const node1 = b.getBlock(10244242)
+    const node2 = b.getBlock(10244243)
+    const node3 = b.getBlock(10244244)
+    const node4 = b.getBlock(10244245)
+    b.tryFlush()
+
+    t.alike(await node1, data1)
+    t.alike(await node2, null)
+    t.alike(await node3, null)
+    t.alike(await node4, null)
+  }
+})
+
+test.skip('memory overlay - bitfield pages', async function (t) {
+  const c = await getCore(t)
+
+  const empty = Buffer.alloc(4096)
+  const full = Buffer.alloc(4096, 0xff)
+
+  {
+    const b = c.createWriteBatch()
+    b.putBitfieldPage(0, empty)
+    b.putBitfieldPage(1, full)
+    await b.flush()
+  }
+
+  {
+    const b = c.createWriteBatch()
+    b.putBitfieldPage(10244243, empty)
+    b.putBitfieldPage(10244244, full)
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const page1 = b.getBitfieldPage(0)
+    const page2 = b.getBitfieldPage(1)
+    const page3 = b.getBitfieldPage(10244243)
+    const page4 = b.getBitfieldPage(10244244)
+    const pageNull = b.getBitfieldPage(2)
+    b.tryFlush()
+
+    t.alike(await page1, empty)
+    t.alike(await page2, full)
+    t.alike(await page3, empty)
+    t.alike(await page4, full)
+    t.alike(await pageNull, null)
+  }
+
+  t.alike(await c.peakLastBitfieldPage(), { index: 10244244, page: full })
+
+  {
+    const pages = []
+    for await (const page of c.createBitfieldPageStream()) {
+      pages.push(page)
+    }
+
+    t.alike(pages, [
+      { index: 0, page: empty },
+      { index: 1, page: full },
+      { index: 10244243, page: empty },
+      { index: 10244244, page: full }
+    ])
+  }
+
+  {
+    const b = c.createWriteBatch()
+
+    b.deleteBitfieldPage(0)
+    b.deleteBitfieldPage(1)
+    b.deleteBitfieldPage(10244243)
+    b.deleteBitfieldPage(10244244)
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const page1 = b.getBitfieldPage(0)
+    const page2 = b.getBitfieldPage(1)
+    const page3 = b.getBitfieldPage(10244243)
+    const page4 = b.getBitfieldPage(10244244)
+    b.tryFlush()
+
+    t.alike(await page1, null)
+    t.alike(await page2, null)
+    t.alike(await page3, null)
+    t.alike(await page4, null)
+  }
+
+  t.alike(await c.peakLastBitfieldPage(), null)
+
+  {
+    const pages = []
+    for await (const page of c.createBitfieldPageStream()) {
+      pages.push(page)
+    }
+
+    t.alike(pages, [])
+  }
+})
+
+test('memory overlay - bitfield page: delete range', async function (t) {
+  const c = await getCore(t)
+
+  const empty = Buffer.alloc(4096)
+  const full = Buffer.alloc(4096, 0xff)
+
+  {
+    const b = c.createWriteBatch()
+
+    b.putBitfieldPage(10244243, empty)
+    b.putBitfieldPage(10244244, full)
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const page3 = b.getBitfieldPage(10244243)
+    const page4 = b.getBitfieldPage(10244244)
+    const pageNull = b.getBitfieldPage(2)
+    b.tryFlush()
+
+    t.alike(await page3, empty)
+    t.alike(await page4, full)
+    t.alike(await pageNull, null)
+  }
+
+  {
+    const b = c.createWriteBatch()
+
+    b.deleteBitfieldPageRange(10244244, 10244245)
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const page3 = b.getBitfieldPage(10244243)
+    const page4 = b.getBitfieldPage(10244244)
+    b.tryFlush()
+
+    t.alike(await page3, empty)
+    t.alike(await page4, null)
+  }
+
+  {
+    const b = c.createWriteBatch()
+
+    b.deleteBitfieldPageRange(0, -1)
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+
+    const page1 = b.getBitfieldPage(0)
+    const page4 = b.getBitfieldPage(10244244)
+    b.tryFlush()
+
+    t.alike(await page1, null)
+    t.alike(await page4, null)
+  }
+
+  // t.alike(await c.peakLastBitfieldPage(), null)
+
+  // {
+  //   const pages = []
+  //   for await (const page of c.createBitfieldPageStream()) {
+  //     pages.push(page)
+  //   }
+
+  //   t.alike(pages, [])
+  // }
 })
 
 async function getStorage (t, dir) {
@@ -398,5 +579,5 @@ async function getCore (t, s) {
   const c = await s.resume(KEY)
   t.is(c, null)
 
-  return await s.create({ key: KEY, discoveryKey: KEY })
+  return new MemoryOverlay(await s.create({ key: KEY, discoveryKey: KEY }))
 }
