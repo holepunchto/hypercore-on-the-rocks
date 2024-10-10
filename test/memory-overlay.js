@@ -197,7 +197,7 @@ test('memory overlay - delete tree node range: no end', async function (t) {
   }
 })
 
-test.skip('memory overlay - peek last tree node', async function (t) {
+test('memory overlay - peek last tree node', async function (t) {
   const c = await getCore(t)
 
   {
@@ -217,13 +217,30 @@ test.skip('memory overlay - peek last tree node', async function (t) {
       hash: HASH,
       size: 10
     })
-    await b.flush()
+    await t.exception(() => b.flush())
   }
 
   {
     const b = c.createWriteBatch()
+    b.putTreeNode({ index: 10000001, hash: HASH, size: 11 })
+    b.putTreeNode({ index: 10000002, hash: HASH, size: 12 })
+    b.putTreeNode({ index: 10000003, hash: HASH, size: 13 })
+    await b.flush()
+  }
+
+  {
+    const node = await c.peekLastTreeNode()
+    t.alike(await node, { index: 10000003, hash: HASH, size: 13 })
+  }
+})
+
+test('memory overlay - peek last tree node', async function (t) {
+  const c = await getCore(t)
+
+  {
+    const b = c.createWriteBatch()
     b.putTreeNode({
-      index: 10,
+      index: 10000000,
       hash: HASH,
       size: 10
     })
@@ -231,8 +248,26 @@ test.skip('memory overlay - peek last tree node', async function (t) {
   }
 
   {
-    const node = await c.peakLastTreeNode()
-    t.alike(await node, { index: 10000000, hash: HASH, size: 10 })
+    const b = c.createWriteBatch()
+    b.putTreeNode({
+      index: 1,
+      hash: HASH,
+      size: 10
+    })
+    await t.exception(() => b.flush())
+  }
+
+  {
+    const b = c.createWriteBatch()
+    b.putTreeNode({ index: 10000001, hash: HASH, size: 11 })
+    b.putTreeNode({ index: 10000002, hash: HASH, size: 12 })
+    b.putTreeNode({ index: 10000003, hash: HASH, size: 13 })
+    await b.flush()
+  }
+
+  {
+    const node = await c.peekLastTreeNode()
+    t.alike(await node, { index: 10000003, hash: HASH, size: 13 })
   }
 })
 
@@ -552,7 +587,7 @@ test('memory overlay - bitfield page: delete range', async function (t) {
     t.alike(await page4, null)
   }
 
-  // t.alike(await c.peakLastBitfieldPage(), null)
+  t.alike(await c.peekLastBitfieldPage(), null)
 
   // {
   //   const pages = []
@@ -564,7 +599,7 @@ test('memory overlay - bitfield page: delete range', async function (t) {
   // }
 })
 
-test.solo('user data', async function (t) {
+test('user data', async function (t) {
   const c = await getCore(t)
 
   {
