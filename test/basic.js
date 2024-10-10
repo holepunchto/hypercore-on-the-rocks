@@ -224,7 +224,7 @@ test('peek last tree node', async function (t) {
   }
 
   {
-    const node = await c.peakLastTreeNode()
+    const node = await c.peekLastTreeNode()
     t.alike(await node, { index: 10000000, hash: HASH, size: 10 })
   }
 })
@@ -434,7 +434,7 @@ test('bitfield pages', async function (t) {
     t.alike(await pageNull, null)
   }
 
-  t.alike(await c.peakLastBitfieldPage(), { index: 10244244, page: full })
+  t.alike(await c.peekLastBitfieldPage(), { index: 10244244, page: full })
 
   {
     const pages = []
@@ -476,7 +476,7 @@ test('bitfield pages', async function (t) {
     t.alike(await page4, null)
   }
 
-  t.alike(await c.peakLastBitfieldPage(), null)
+  t.alike(await c.peekLastBitfieldPage(), null)
 
   {
     const pages = []
@@ -564,7 +564,7 @@ test('bitfield page: delete range', async function (t) {
     t.alike(await page4, null)
   }
 
-  t.alike(await c.peakLastBitfieldPage(), null)
+  t.alike(await c.peekLastBitfieldPage(), null)
 
   {
     const pages = []
