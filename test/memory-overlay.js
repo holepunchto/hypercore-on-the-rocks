@@ -1,4 +1,5 @@
 const test = require('brittle')
+const b4a = require('b4a')
 const tmp = require('test-tmp')
 
 const CoreStorage = require('../')
@@ -704,6 +705,43 @@ test('user data', async function (t) {
 
   t.alike(await a, null)
   t.alike(await b, Buffer.from('verden'))
+})
+
+test('memory overlay - reads fall back to disk', async function (t) {
+  const c = await getCore(t)
+
+  const node = { index: 1, hash: HASH, size: 1 }
+  const page = b4a.alloc(4096, 0xff)
+  const publicKey = b4a.alloc(32, 1)
+  const secretKey = b4a.alloc(64, 2)
+  const encryptionKey = b4a.alloc(32, 3)
+
+  {
+    // write to disk
+    const w = c.storage.createWriteBatch()
+    w.putTreeNode({ index: 1, hash: HASH, size: 1 })
+    w.putBitfieldPage(1,  page)
+    w.setUserData('hello', b4a.from('world'))
+    w.setLocalKeyPair({ publicKey, secretKey })
+    w.setEncryptionKey(encryptionKey)
+    await w.flush()
+  }
+
+  const b = c.createReadBatch()
+
+  const tree = b.getTreeNode(1)
+  const bitfield = b.getBitfieldPage(1)
+  const userData = b.getUserData('hello')
+  const keyPair = b.getLocalKeyPair()
+  const encryption = b.getEncryptionKey()
+
+  await b.flush()
+
+  t.alike(await tree, node)
+  t.alike(await bitfield, page)
+  t.alike(await userData, b4a.from('world'))
+  t.alike(await keyPair, { publicKey, secretKey })
+  t.alike(await encryption, encryptionKey)
 })
 
 async function getStorage (t, dir) {
