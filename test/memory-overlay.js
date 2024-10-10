@@ -707,6 +707,38 @@ test('user data', async function (t) {
   t.alike(await b, Buffer.from('verden'))
 })
 
+test('data dependency', async function (t) {
+  const c = await getCore(t)
+
+  {
+    const b = c.createWriteBatch()
+    b.setDataDependency({ data: 3, length: 10 })
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+    const dep = b.getDataDependency()
+    b.tryFlush()
+
+    t.alike(await dep, { data: 3, length: 10 })
+  }
+
+  {
+    const b = c.createWriteBatch()
+    b.setDataDependency({ data: 4, length: 12 })
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+    const dep = b.getDataDependency()
+    b.tryFlush()
+
+    t.alike(await dep, { data: 4, length: 12 })
+  }
+})
+
 test('memory overlay - reads fall back to disk', async function (t) {
   const c = await getCore(t)
 
@@ -715,6 +747,7 @@ test('memory overlay - reads fall back to disk', async function (t) {
   const publicKey = b4a.alloc(32, 1)
   const secretKey = b4a.alloc(64, 2)
   const encryptionKey = b4a.alloc(32, 3)
+  const dependency = { data: 2,  length: 5 }
 
   {
     // write to disk
@@ -724,6 +757,7 @@ test('memory overlay - reads fall back to disk', async function (t) {
     w.setUserData('hello', b4a.from('world'))
     w.setLocalKeyPair({ publicKey, secretKey })
     w.setEncryptionKey(encryptionKey)
+    w.setDataDependency(dependency)
     await w.flush()
   }
 
@@ -734,6 +768,7 @@ test('memory overlay - reads fall back to disk', async function (t) {
   const userData = b.getUserData('hello')
   const keyPair = b.getLocalKeyPair()
   const encryption = b.getEncryptionKey()
+  const data = b.getDataDependency()
 
   await b.flush()
 
@@ -742,6 +777,7 @@ test('memory overlay - reads fall back to disk', async function (t) {
   t.alike(await userData, b4a.from('world'))
   t.alike(await keyPair, { publicKey, secretKey })
   t.alike(await encryption, encryptionKey)
+  t.alike(await data, dependency)
 })
 
 async function getStorage (t, dir) {
