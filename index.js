@@ -5,7 +5,9 @@ const RW = require('read-write-mutexify')
 const b4a = require('b4a')
 const flat = require('flat-tree')
 const assert = require('nanoassert')
+
 const m = require('./lib/messages')
+const MemoryOverlay = require('./lib/memory-overlay')
 
 const INF = b4a.from([0xff])
 
@@ -462,6 +464,10 @@ class HypercoreStorage {
     } finally {
       this.mutex.write.unlock()
     }
+  }
+
+  createMemoryOverlay () {
+    return new MemoryOverlay(this)
   }
 
   snapshot () {
