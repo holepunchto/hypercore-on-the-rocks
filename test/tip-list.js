@@ -257,3 +257,20 @@ test('tip list - invalid deletion', async function (t) {
   t.alike(tip.get(5), b4a.from('world'))
   t.alike(tip.get(6), b4a.from('goodbye'))
 })
+
+test('tip list - put before offset', async function (t) {
+  const tip = new TipList()
+  tip.put(100000, b4a.from('hello'))
+
+  {
+    const b = new TipList()
+    b.put(1, b4a.from('world'))
+    await t.exception(() => tip.merge(b))
+  }
+
+  {
+    const b = new TipList()
+    b.put(10, b4a.from('goodbye'))
+    await t.exception(() => tip.merge(b))
+  }
+})
