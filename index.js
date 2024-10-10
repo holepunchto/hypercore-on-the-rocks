@@ -180,6 +180,10 @@ class ReadBatch {
     return this._get(encodeCoreIndex(this.storage.corePointer, CORE.ENCRYPTION_KEY), null)
   }
 
+  getDataDependency () {
+    return this._get(encodeDataIndex(this.storage.dataPointer, DATA.DEPENDENCY), m.DataDependency)
+  }
+
   getDataInfo (info) {
     return this._get(encodeDataIndex(this.storage.dataPointer, DATA.INFO), m.DataInfo)
   }
