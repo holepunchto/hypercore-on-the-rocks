@@ -747,13 +747,13 @@ test('memory overlay - reads fall back to disk', async function (t) {
   const publicKey = b4a.alloc(32, 1)
   const secretKey = b4a.alloc(64, 2)
   const encryptionKey = b4a.alloc(32, 3)
-  const dependency = { data: 2,  length: 5 }
+  const dependency = { data: 2, length: 5 }
 
   {
     // write to disk
     const w = c.storage.createWriteBatch()
     w.putTreeNode({ index: 1, hash: HASH, size: 1 })
-    w.putBitfieldPage(1,  page)
+    w.putBitfieldPage(1, page)
     w.setUserData('hello', b4a.from('world'))
     w.setLocalKeyPair({ publicKey, secretKey })
     w.setEncryptionKey(encryptionKey)
