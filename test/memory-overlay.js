@@ -564,6 +564,58 @@ test('memory overlay - bitfield page: delete range', async function (t) {
   // }
 })
 
+test.solo('user data', async function (t) {
+  const c = await getCore(t)
+
+  {
+    const b = c.createWriteBatch()
+
+    b.setUserData('hello', Buffer.from('world'))
+    b.setUserData('hej', Buffer.from('verden'))
+
+    await b.flush()
+  }
+
+  {
+    const b = c.createReadBatch()
+    const data1 = b.getUserData('hello')
+    const data2 = b.getUserData('hej')
+    b.tryFlush()
+
+    t.alike(await data1, Buffer.from('world'))
+    t.alike(await data2, Buffer.from('verden'))
+  }
+
+  // const exp = [
+  //   { key: 'hej', value: Buffer.from('verden') },
+  //   { key: 'hello', value: Buffer.from('world') }
+  // ]
+
+  // const userData = []
+  // for await (const e of c.createUserDataStream()) {
+  //   userData.push(e)
+  // }
+
+  // t.alike(userData, exp)
+
+  {
+    const b = c.createWriteBatch()
+
+    b.setUserData('hello', null)
+    b.setUserData('hej', Buffer.from('verden'))
+
+    await b.flush()
+  }
+
+  const batch = c.createReadBatch()
+  const [a, b] = [batch.getUserData('hello'), batch.getUserData('hej')]
+
+  await batch.flush()
+
+  t.alike(await a, null)
+  t.alike(await b, Buffer.from('verden'))
+})
+
 async function getStorage (t, dir) {
   if (!dir) dir = await tmp(t)
   const s = new CoreStorage(dir)
