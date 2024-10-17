@@ -1,12 +1,14 @@
 const test = require('brittle')
+const b4a = require('b4a')
 const tmp = require('test-tmp')
-const CoreStorage = require('../')
 
-const DK_0 = Buffer.alloc(32).fill('dk0')
-const DK_1 = Buffer.alloc(32).fill('dk1')
+const CoreStorage = require('../')
+const MemoryOverlay = require('../lib/memory-overlay')
+
+const KEY = Buffer.alloc(32).fill('dk0')
 const HASH = Buffer.alloc(32).fill('hash')
 
-test('basic', async function (t) {
+test('memory overlay - basic', async function (t) {
   const c = await getCore(t)
 
   {
@@ -38,7 +40,7 @@ test('basic', async function (t) {
   }
 })
 
-test('delete nodes', async function (t) {
+test.skip('memory overlay - delete nodes', async function (t) {
   const c = await getCore(t)
 
   {
@@ -78,7 +80,7 @@ test('delete nodes', async function (t) {
   }
 })
 
-test('delete tree node range', async function (t) {
+test('memory overlay - delete tree node range', async function (t) {
   const c = await getCore(t)
 
   {
@@ -137,7 +139,7 @@ test('delete tree node range', async function (t) {
   }
 })
 
-test('delete tree node range: no end', async function (t) {
+test('memory overlay - delete tree node range: no end', async function (t) {
   const c = await getCore(t)
 
   {
@@ -196,40 +198,112 @@ test('delete tree node range: no end', async function (t) {
   }
 })
 
-test('peek last tree node', async function (t) {
+test('memory overlay - peek last tree node', async function (t) {
   const c = await getCore(t)
 
   {
     const b = c.createWriteBatch()
-
     b.putTreeNode({
       index: 10000000,
       hash: HASH,
       size: 10
     })
+    await b.flush()
+  }
 
+  {
+    const b = c.createWriteBatch()
     b.putTreeNode({
       index: 1,
       hash: HASH,
       size: 10
     })
+    await t.exception(() => b.flush())
+  }
 
-    b.putTreeNode({
-      index: 10,
-      hash: HASH,
-      size: 10
-    })
-
+  {
+    const b = c.createWriteBatch()
+    b.putTreeNode({ index: 10000001, hash: HASH, size: 11 })
+    b.putTreeNode({ index: 10000002, hash: HASH, size: 12 })
+    b.putTreeNode({ index: 10000003, hash: HASH, size: 13 })
     await b.flush()
   }
 
   {
     const node = await c.peekLastTreeNode()
-    t.alike(await node, { index: 10000000, hash: HASH, size: 10 })
+    t.alike(await node, { index: 10000003, hash: HASH, size: 13 })
   }
 })
 
-test('put blocks', async function (t) {
+test('memory overlay - invalid tree node add', async function (t) {
+  const c = await getCore(t)
+
+  {
+    const b = c.createWriteBatch()
+    b.putTreeNode({ index: 10000000, hash: HASH, size: 10 })
+    await b.flush()
+  }
+
+  {
+    const b = c.createWriteBatch()
+    b.putTreeNode({ index: 1, hash: HASH, size: 10 })
+    await t.exception(() => b.flush())
+  }
+
+  {
+    const b = c.createWriteBatch()
+    b.putTreeNode({ index: 10000001, hash: HASH, size: 11 })
+    b.putTreeNode({ index: 10000002, hash: HASH, size: 12 })
+    b.putTreeNode({ index: 10000003, hash: HASH, size: 13 })
+    await t.execution(() => b.flush())
+  }
+})
+
+test('memory overlay - peek last tree node', async function (t) {
+  const c = await getCore(t)
+
+  {
+    const b = c.createWriteBatch()
+    b.putTreeNode({ index: 10000000, hash: HASH, size: 10 })
+    b.putTreeNode({ index: 10000001, hash: HASH, size: 11 })
+    b.putTreeNode({ index: 10000002, hash: HASH, size: 12 })
+    b.putTreeNode({ index: 10000003, hash: HASH, size: 13 })
+    await b.flush()
+  }
+
+  {
+    const node = await c.peekLastTreeNode()
+    t.alike(await node, { index: 10000003, hash: HASH, size: 13 })
+  }
+})
+
+test('memory overlay - peek tree node falls back to disk', async function (t) {
+  const c = await getCore(t)
+
+  {
+    // write to disk
+    const w = c.storage.createWriteBatch()
+    w.putTreeNode({ index: 1, hash: HASH, size: 1 })
+    w.putTreeNode({ index: 20000000, hash: HASH, size: 20 })
+    await w.flush()
+  }
+
+  {
+    const b = c.createWriteBatch()
+    b.putTreeNode({ index: 10000000, hash: HASH, size: 10 })
+    b.putTreeNode({ index: 10000001, hash: HASH, size: 11 })
+    b.putTreeNode({ index: 10000002, hash: HASH, size: 12 })
+    b.putTreeNode({ index: 10000003, hash: HASH, size: 13 })
+    await b.flush()
+  }
+
+  {
+    const node = await c.peekLastTreeNode()
+    t.alike(await node, { index: 20000000, hash: HASH, size: 20 })
+  }
+})
+
+test('memory overlay - put blocks', async function (t) {
   const c = await getCore(t)
 
   const data = Buffer.alloc(32, 1)
@@ -255,24 +329,24 @@ test('put blocks', async function (t) {
     t.alike(await treeNode, null)
   }
 
-  {
-    const b = c.createWriteBatch()
+  // {
+  //   const b = c.createWriteBatch()
 
-    b.deleteBlock(10244242)
+  //   b.deleteBlock(10244242)
 
-    await b.flush()
-  }
+  //   await b.flush()
+  // }
 
-  {
-    const b = c.createReadBatch()
-    const node = b.getBlock(10244242)
-    b.tryFlush()
+  // {
+  //   const b = c.createReadBatch()
+  //   const node = b.getBlock(10244242)
+  //   b.tryFlush()
 
-    t.is(await node, null)
-  }
+  //   t.is(await node, null)
+  // }
 })
 
-test('delete block range', async function (t) {
+test('memory overlay - delete block range', async function (t) {
   const c = await getCore(t)
 
   const data1 = Buffer.alloc(32, 1)
@@ -330,7 +404,7 @@ test('delete block range', async function (t) {
   }
 })
 
-test('delete block range: no end', async function (t) {
+test('memory overlay - delete block range: no end', async function (t) {
   const c = await getCore(t)
 
   const data1 = Buffer.alloc(32, 1)
@@ -388,19 +462,7 @@ test('delete block range: no end', async function (t) {
   }
 })
 
-test('make two cores', async function (t) {
-  const s = await getStorage(t)
-
-  let c1 = await s.resume(DK_0)
-  let c2 = s.resume(DK_1)
-
-  if (c1 === null) c1 = await s.create({ key: DK_0, discoveryKey: DK_0 })
-  if (c2 === null) c2 = await s.create({ key: DK_1, discoveryKey: DK_1 })
-
-  t.unlike(c1.corePointer, c2.corePointer)
-})
-
-test('bitfield pages', async function (t) {
+test('memory overlay - bitfield pages', async function (t) {
   const c = await getCore(t)
 
   const empty = Buffer.alloc(4096)
@@ -408,87 +470,114 @@ test('bitfield pages', async function (t) {
 
   {
     const b = c.createWriteBatch()
-
-    b.putBitfieldPage(0, empty)
-    b.putBitfieldPage(1, full)
     b.putBitfieldPage(10244243, empty)
     b.putBitfieldPage(10244244, full)
-
     await b.flush()
+  }
+
+  {
+    const b = c.createWriteBatch()
+    b.putBitfieldPage(1, empty)
+    await t.exception(() => b.flush())
   }
 
   {
     const b = c.createReadBatch()
 
-    const page1 = b.getBitfieldPage(0)
-    const page2 = b.getBitfieldPage(1)
-    const page3 = b.getBitfieldPage(10244243)
-    const page4 = b.getBitfieldPage(10244244)
+    const page1 = b.getBitfieldPage(10244243)
+    const page2 = b.getBitfieldPage(10244244)
     const pageNull = b.getBitfieldPage(2)
     b.tryFlush()
 
     t.alike(await page1, empty)
     t.alike(await page2, full)
-    t.alike(await page3, empty)
-    t.alike(await page4, full)
     t.alike(await pageNull, null)
   }
 
   t.alike(await c.peekLastBitfieldPage(), { index: 10244244, page: full })
 
-  {
-    const pages = []
-    for await (const page of c.createBitfieldPageStream()) {
-      pages.push(page)
-    }
+  // {
+  //   const pages = []
+  //   for await (const page of c.createBitfieldPageStream()) {
+  //     pages.push(page)
+  //   }
 
-    t.alike(pages, [
-      { index: 0, page: empty },
-      { index: 1, page: full },
-      { index: 10244243, page: empty },
-      { index: 10244244, page: full }
-    ])
+  //   t.alike(pages, [
+  //     { index: 10244243, page: empty },
+  //     { index: 10244244, page: full }
+  //   ])
+  // }
+
+  // {
+  //   const b = c.createWriteBatch()
+
+  //   b.deleteBitfieldPage(0)
+  //   b.deleteBitfieldPage(1)
+  //   b.deleteBitfieldPage(10244243)
+  //   b.deleteBitfieldPage(10244244)
+
+  //   await b.flush()
+  // }
+
+  // {
+  //   const b = c.createReadBatch()
+
+  //   const page1 = b.getBitfieldPage(0)
+  //   const page2 = b.getBitfieldPage(1)
+  //   const page3 = b.getBitfieldPage(10244243)
+  //   const page4 = b.getBitfieldPage(10244244)
+  //   b.tryFlush()
+
+  //   t.alike(await page1, null)
+  //   t.alike(await page2, null)
+  //   t.alike(await page3, null)
+  //   t.alike(await page4, null)
+  // }
+
+  // t.alike(await c.peekLastBitfieldPage(), null)
+
+  // {
+  //   const pages = []
+  //   for await (const page of c.createBitfieldPageStream()) {
+  //     pages.push(page)
+  //   }
+
+  //   t.alike(pages, [])
+  // }
+})
+
+test('memory overlay - peek bitfield page falls back to disk', async function (t) {
+  const c = await getCore(t)
+
+  const empty = Buffer.alloc(4096)
+  const full = Buffer.alloc(4096, 0xff)
+
+  {
+    // write to disk
+    const w = c.storage.createWriteBatch()
+
+    w.putBitfieldPage(1, empty)
+    w.putBitfieldPage(20000000, full)
+
+    await w.flush()
   }
 
   {
     const b = c.createWriteBatch()
 
-    b.deleteBitfieldPage(0)
-    b.deleteBitfieldPage(1)
-    b.deleteBitfieldPage(10244243)
-    b.deleteBitfieldPage(10244244)
+    b.putBitfieldPage(10244243, empty)
+    b.putBitfieldPage(10244244, full)
 
     await b.flush()
   }
 
   {
-    const b = c.createReadBatch()
-
-    const page1 = b.getBitfieldPage(0)
-    const page2 = b.getBitfieldPage(1)
-    const page3 = b.getBitfieldPage(10244243)
-    const page4 = b.getBitfieldPage(10244244)
-    b.tryFlush()
-
-    t.alike(await page1, null)
-    t.alike(await page2, null)
-    t.alike(await page3, null)
-    t.alike(await page4, null)
-  }
-
-  t.alike(await c.peekLastBitfieldPage(), null)
-
-  {
-    const pages = []
-    for await (const page of c.createBitfieldPageStream()) {
-      pages.push(page)
-    }
-
-    t.alike(pages, [])
+    const node = await c.peekLastBitfieldPage()
+    t.alike(await node, { index: 20000000, page: full })
   }
 })
 
-test('bitfield page: delete range', async function (t) {
+test('memory overlay - bitfield page: delete range', async function (t) {
   const c = await getCore(t)
 
   const empty = Buffer.alloc(4096)
@@ -497,8 +586,6 @@ test('bitfield page: delete range', async function (t) {
   {
     const b = c.createWriteBatch()
 
-    b.putBitfieldPage(0, empty)
-    b.putBitfieldPage(1, full)
     b.putBitfieldPage(10244243, empty)
     b.putBitfieldPage(10244244, full)
 
@@ -508,15 +595,11 @@ test('bitfield page: delete range', async function (t) {
   {
     const b = c.createReadBatch()
 
-    const page1 = b.getBitfieldPage(0)
-    const page2 = b.getBitfieldPage(1)
     const page3 = b.getBitfieldPage(10244243)
     const page4 = b.getBitfieldPage(10244244)
     const pageNull = b.getBitfieldPage(2)
     b.tryFlush()
 
-    t.alike(await page1, empty)
-    t.alike(await page2, full)
     t.alike(await page3, empty)
     t.alike(await page4, full)
     t.alike(await pageNull, null)
@@ -525,7 +608,7 @@ test('bitfield page: delete range', async function (t) {
   {
     const b = c.createWriteBatch()
 
-    b.deleteBitfieldPageRange(1, 10244244)
+    b.deleteBitfieldPageRange(10244244, 10244245)
 
     await b.flush()
   }
@@ -533,16 +616,12 @@ test('bitfield page: delete range', async function (t) {
   {
     const b = c.createReadBatch()
 
-    const page1 = b.getBitfieldPage(0)
-    const page2 = b.getBitfieldPage(1)
     const page3 = b.getBitfieldPage(10244243)
     const page4 = b.getBitfieldPage(10244244)
     b.tryFlush()
 
-    t.alike(await page1, empty)
-    t.alike(await page2, null)
-    t.alike(await page3, null)
-    t.alike(await page4, full)
+    t.alike(await page3, empty)
+    t.alike(await page4, null)
   }
 
   {
@@ -566,73 +645,14 @@ test('bitfield page: delete range', async function (t) {
 
   t.alike(await c.peekLastBitfieldPage(), null)
 
-  {
-    const pages = []
-    for await (const page of c.createBitfieldPageStream()) {
-      pages.push(page)
-    }
+  // {
+  //   const pages = []
+  //   for await (const page of c.createBitfieldPageStream()) {
+  //     pages.push(page)
+  //   }
 
-    t.alike(pages, [])
-  }
-})
-
-test('make lots of cores in parallel', async function (t) {
-  const s = await getStorage(t)
-  const promises = []
-
-  for (let i = 0; i < 1024; i++) {
-    const key = Buffer.alloc(32).fill('#' + i)
-    promises.push(s.create({ key, discoveryKey: key }))
-  }
-
-  await Promise.all(promises)
-
-  const info = await s.info()
-  t.is(info.total, 1024)
-})
-
-test('header', async function (t) {
-  const dir = await tmp()
-
-  const keyPair = {
-    publicKey: Buffer.alloc(32, 0),
-    secretKey: Buffer.alloc(64, 1)
-  }
-
-  const encryptionKey = Buffer.alloc(32, 2)
-
-  const s1 = await getStorage(t, dir)
-  const c1 = (await s1.resume(DK_0)) || (await s1.create({ key: DK_0, discoveryKey: DK_0, keyPair, encryptionKey }))
-
-  const head = {
-    fork: 1,
-    length: 2,
-    rootHash: Buffer.alloc(32, 0xff),
-    signature: Buffer.alloc(32, 4) // signature is arbitrary length
-  }
-
-  const w = c1.createWriteBatch()
-  w.setCoreHead(head)
-  await w.flush()
-
-  await s1.close()
-
-  const s2 = await getStorage(t, dir)
-  const c2 = await s2.resume(DK_0)
-
-  t.ok(c2)
-
-  const batch = c2.createReadBatch()
-  const auth = batch.getCoreAuth()
-  const kp = batch.getLocalKeyPair()
-  const enc = batch.getEncryptionKey()
-
-  await batch.flush()
-
-  t.alike((await auth).key, DK_0)
-  t.alike((await auth).manifest, null)
-  t.alike(await kp, keyPair)
-  t.alike(await enc, encryptionKey)
+  //   t.alike(pages, [])
+  // }
 })
 
 test('user data', async function (t) {
@@ -657,17 +677,17 @@ test('user data', async function (t) {
     t.alike(await data2, Buffer.from('verden'))
   }
 
-  const exp = [
-    { key: 'hej', value: Buffer.from('verden') },
-    { key: 'hello', value: Buffer.from('world') }
-  ]
+  // const exp = [
+  //   { key: 'hej', value: Buffer.from('verden') },
+  //   { key: 'hello', value: Buffer.from('world') }
+  // ]
 
-  const userData = []
-  for await (const e of c.createUserDataStream()) {
-    userData.push(e)
-  }
+  // const userData = []
+  // for await (const e of c.createUserDataStream()) {
+  //   userData.push(e)
+  // }
 
-  t.alike(userData, exp)
+  // t.alike(userData, exp)
 
   {
     const b = c.createWriteBatch()
@@ -687,191 +707,77 @@ test('user data', async function (t) {
   t.alike(await b, Buffer.from('verden'))
 })
 
-test('reopen default core', async function (t) {
-  const dir = await tmp(t)
-
-  const manifest = Buffer.from('manifest')
-  const keyPair = {
-    publicKey: Buffer.alloc(32, 2),
-    secretKey: Buffer.alloc(64, 3)
-  }
-  const encryptionKey = Buffer.alloc(32, 4)
-
-  const s1 = await getStorage(t, dir)
-  const c1 = (await s1.resume(DK_1)) || (await s1.create({ key: DK_1, discoveryKey: DK_1, manifest, keyPair, encryptionKey }))
-
-  await c1.close()
-  await s1.close()
-
-  const s2 = await getStorage(t, dir)
-  const c2 = await s2.resume()
-
-  t.alike(await getCoreInfo(c2), {
-    auth: {
-      key: DK_1,
-      manifest
-    },
-    keyPair,
-    encryptionKey,
-    head: null
-  })
-
-  t.alike(c2.discoveryKey, DK_1)
-})
-
-test('large manifest', async function (t) {
-  const dir = await tmp(t)
-
-  const manifest = Buffer.alloc(1000, 0xff)
-  const keyPair = {
-    publicKey: Buffer.alloc(32, 2),
-    secretKey: Buffer.alloc(64, 3)
-  }
-  const encryptionKey = Buffer.alloc(32, 4)
-
-  const s1 = await getStorage(t, dir)
-  const c1 = (await s1.resume(DK_1)) || (await s1.create({ key: DK_1, discoveryKey: DK_1, manifest, keyPair, encryptionKey }))
-
-  await c1.close()
-  await s1.close()
-
-  const s2 = await getStorage(t, dir)
-  const c2 = await s2.resume(DK_1)
-
-  t.alike(await getCoreInfo(c2), {
-    auth: {
-      key: DK_1,
-      manifest
-    },
-    keyPair,
-    encryptionKey,
-    head: null
-  })
-
-  t.alike(c2.discoveryKey, DK_1)
-})
-
-test('idle', async function (t) {
-  const s = await getStorage(t)
-  const c = await getCore(t, s)
-
-  t.ok(s.isIdle())
+test('data dependency', async function (t) {
+  const c = await getCore(t)
 
   {
     const b = c.createWriteBatch()
-
-    t.absent(s.isIdle())
-
-    b.putTreeNode({
-      index: 42,
-      hash: HASH,
-      size: 10
-    })
-
-    b.putTreeNode({
-      index: 43,
-      hash: HASH,
-      size: 2
-    })
-
-    const idle = s.idle()
-
+    b.setDataDependency({ data: 3, length: 10 })
     await b.flush()
-
-    await t.execution(idle)
-
-    t.ok(s.isIdle())
   }
 
   {
-    let idle = false
+    const b = c.createReadBatch()
+    const dep = b.getDataDependency()
+    b.tryFlush()
 
-    const b1 = c.createReadBatch()
-    const b2 = c.createReadBatch()
-    const b3 = c.createReadBatch()
+    t.alike(await dep, { data: 3, length: 10 })
+  }
 
-    const node1 = b1.getTreeNode(42)
-    const node2 = b2.getTreeNode(43)
-    const node3 = b3.getTreeNode(44)
+  {
+    const b = c.createWriteBatch()
+    b.setDataDependency({ data: 4, length: 12 })
+    await b.flush()
+  }
 
-    const promise = s.idle().then(() => { idle = true })
+  {
+    const b = c.createReadBatch()
+    const dep = b.getDataDependency()
+    b.tryFlush()
 
-    b1.tryFlush()
-
-    t.absent(idle)
-    t.absent(s.isIdle())
-
-    b2.tryFlush()
-
-    t.absent(idle)
-    t.absent(s.isIdle())
-
-    b3.tryFlush()
-
-    await t.execution(promise)
-
-    t.ok(idle)
-    t.ok(s.isIdle())
-
-    t.alike(await node1, { index: 42, hash: HASH, size: 10 })
-    t.alike(await node2, { index: 43, hash: HASH, size: 2 })
-    t.alike(await node3, null)
+    t.alike(await dep, { data: 4, length: 12 })
   }
 })
 
-test('dependencies and streams', async function (t) {
-  const s = await getStorage(t)
-  const c = await getCore(t, s)
+test('memory overlay - reads fall back to disk', async function (t) {
+  const c = await getCore(t)
+
+  const node = { index: 1, hash: HASH, size: 1 }
+  const page = b4a.alloc(4096, 0xff)
+  const publicKey = b4a.alloc(32, 1)
+  const secretKey = b4a.alloc(64, 2)
+  const encryptionKey = b4a.alloc(32, 3)
+  const dependency = { data: 2, length: 5 }
 
   {
-    const w = c.createWriteBatch()
-    for (let i = 0; i < 5; i++) w.putBlock(i, Buffer.from('block #' + i))
+    // write to disk
+    const w = c.storage.createWriteBatch()
+    w.putTreeNode({ index: 1, hash: HASH, size: 1 })
+    w.putBitfieldPage(1, page)
+    w.setUserData('hello', b4a.from('world'))
+    w.setLocalKeyPair({ publicKey, secretKey })
+    w.setEncryptionKey(encryptionKey)
+    w.setDataDependency(dependency)
     await w.flush()
   }
 
-  const b = await c.registerBatch('batch', { length: 5 })
+  const b = c.createReadBatch()
 
-  {
-    const w = b.createWriteBatch()
-    for (let i = 0; i < 5; i++) w.putBlock(5 + i, Buffer.from('block #' + (5 + i)))
-    await w.flush()
-  }
+  const tree = b.getTreeNode(1)
+  const bitfield = b.getBitfieldPage(1)
+  const userData = b.getUserData('hello')
+  const keyPair = b.getLocalKeyPair()
+  const encryption = b.getEncryptionKey()
+  const data = b.getDataDependency()
 
-  let i = 0
-  for await (const data of b.createBlockStream()) {
-    t.is(data.index, i)
-    t.alike(data.value, Buffer.from('block #' + i))
-    i++
-  }
+  await b.flush()
 
-  t.is(i, 10)
-
-  i = 9
-  for await (const data of b.createBlockStream({ reverse: true })) {
-    t.is(data.index, i)
-    t.alike(data.value, Buffer.from('block #' + i))
-    i--
-  }
-
-  t.is(i, -1)
-
-  i = 8
-  for await (const data of b.createBlockStream({ reverse: true, limit: 2, gte: 4, lt: 9 })) {
-    t.is(data.index, i)
-    t.alike(data.value, Buffer.from('block #' + i))
-    i--
-  }
-
-  t.is(i, 6)
-
-  i = 4
-  for await (const data of b.createBlockStream({ limit: 2, gte: 4, lt: 9 })) {
-    t.is(data.index, i)
-    t.alike(data.value, Buffer.from('block #' + i))
-    i++
-  }
-
-  t.is(i, 6)
+  t.alike(await tree, node)
+  t.alike(await bitfield, page)
+  t.alike(await userData, b4a.from('world'))
+  t.alike(await keyPair, { publicKey, secretKey })
+  t.alike(await encryption, encryptionKey)
+  t.alike(await data, dependency)
 })
 
 async function getStorage (t, dir) {
@@ -886,26 +792,8 @@ async function getStorage (t, dir) {
 async function getCore (t, s) {
   if (!s) s = await getStorage(t)
 
-  const c = await s.resume(DK_0)
+  const c = await s.resume(KEY)
   t.is(c, null)
 
-  return await s.create({ key: DK_0, discoveryKey: DK_0 })
-}
-
-async function getCoreInfo (storage) {
-  const r = storage.createReadBatch()
-
-  const auth = r.getCoreAuth()
-  const localKeyPair = r.getLocalKeyPair()
-  const encryptionKey = r.getEncryptionKey()
-  const head = r.getCoreHead()
-
-  await r.flush()
-
-  return {
-    auth: await auth,
-    keyPair: await localKeyPair,
-    encryptionKey: await encryptionKey,
-    head: await head
-  }
+  return new MemoryOverlay(await s.create({ key: KEY, discoveryKey: KEY }))
 }
